@@ -1,0 +1,1279 @@
+<!DOCTYPE html>
+<!--
+  ╔══════════════════════════════════════════════════════════════════════════════╗
+  ║            HOSPITAL FLOOR PLAN EDITOR — FULLY ANNOTATED VERSION             ║
+  ║                                                                              ║
+  ║  PURPOSE:                                                                    ║
+  ║    A browser-based floor plan designer. The user draws walls, labels rooms   ║
+  ║    with access control rules, and places objects (beds, hand-wash stations   ║
+  ║    etc.). Clicking "Export JSON" downloads a floor_plan.json file that your  ║
+  ║    Mesa simulation reads to set up its environment.                          ║
+  ║                                                                              ║
+  ║  TECH STACK:                                                                 ║
+  ║    • Fabric.js  — canvas library (loaded from CDN, no install needed)        ║
+  ║    • Vanilla JS — no frameworks, no build step                               ║
+  ║    • Pure CSS   — all styling inline in this file                            ║
+  ║                                                                              ║
+  ║  FILE STRUCTURE:                                                             ║
+  ║    1.  <head>        — page metadata + all CSS styles                        ║
+  ║    2.  <body> HTML   — the three UI regions (topbar / sidebar / canvas)      ║
+  ║    3.  <script>      — all JavaScript logic, broken into labelled sections   ║
+  ║                                                                              ║
+  ║  HOW DATA FLOWS:                                                             ║
+  ║    User draws on canvas                                                      ║
+  ║        → Fabric.js captures mouse events                                     ║
+  ║        → We create a Fabric object (visual) AND push a record to `store`     ║
+  ║        → On export, `store` is serialised to JSON and downloaded             ║
+  ║        → Mesa loads that JSON to build its walkable grid + room metadata     ║
+  ╚══════════════════════════════════════════════════════════════════════════════╝
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hospital Floor Plan Editor</title>
+
+  <style>
+    /* ════════════════════════════════════════════════════════════════════
+       CSS RESET & ROOT VARIABLES
+       ════════════════════════════════════════════════════════════════════
+       We use CSS custom properties (variables) so every colour is defined
+       exactly once. If you want a light theme, change these values here
+       and everything updates automatically.
+    ════════════════════════════════════════════════════════════════════ */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg:     #0d1117;   /* page background — very dark navy              */
+      --panel:  #161b22;   /* sidebar/topbar background — slightly lighter  */
+      --border: #30363d;   /* border colour for all panels/inputs           */
+      --text:   #e6edf3;   /* primary text colour                           */
+      --muted:  #7d8590;   /* secondary text (labels, hints)                */
+      --accent: #2f81f7;   /* highlight colour — GitHub-style blue          */
+      --accent2:#388bfd;   /* hover state for accent buttons                */
+    }
+
+    /* ════════════════════════════════════════════════════════════════════
+       BODY
+       We use flexbox to stack the topbar, main area, and statusbar
+       vertically. overflow:hidden prevents page-level scrollbars —
+       scrolling happens inside the canvas area only.
+    ════════════════════════════════════════════════════════════════════ */
+    body {
+      font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;           /* fill the full viewport height */
+      display: flex;
+      flex-direction: column;  /* stack children vertically     */
+      overflow: hidden;
+      user-select: none;       /* stops text accidentally being highlighted while drawing */
+    }
+
+    /* ════════════════════════════════════════════════════════════════════
+       TOP BAR
+       Fixed-height strip across the top containing the app name,
+       description, and action buttons.
+    ════════════════════════════════════════════════════════════════════ */
+    #topbar {
+      height: 48px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      gap: 10px;
+      flex-shrink: 0;   /* don't let flexbox squash this row */
+    }
+    #topbar .logo { font-size: 13px; font-weight: 700; letter-spacing: .12em; color: var(--accent); text-transform: uppercase; white-space: nowrap; }
+    #topbar .sub  { font-size: 11px; color: var(--muted); white-space: nowrap; }
+    .spacer { flex: 1; }   /* pushes the buttons to the right end of the topbar */
+
+    /* Generic reusable button styles */
+    .btn {
+      padding: 5px 13px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all .15s;
+      white-space: nowrap;
+    }
+    .btn:hover          { background: #21262d; border-color: #8b949e; }
+    .btn.primary        { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .btn.primary:hover  { background: var(--accent2); }
+    .btn.danger         { border-color: #f85149; color: #f85149; }
+    .btn.danger:hover   { background: rgba(248,81,73,.1); }
+
+    /* ════════════════════════════════════════════════════════════════════
+       MAIN AREA
+       Horizontal flex row: sidebar on the left, canvas on the right.
+       flex:1 makes it fill all remaining vertical space between the
+       topbar and the statusbar.
+    ════════════════════════════════════════════════════════════════════ */
+    #main { display: flex; flex: 1; overflow: hidden; }
+
+    /* ════════════════════════════════════════════════════════════════════
+       SIDEBAR
+       Fixed-width left panel. overflow-y:auto adds a scrollbar if the
+       content is taller than the panel (unlikely but safe).
+    ════════════════════════════════════════════════════════════════════ */
+    #sidebar {
+      width: 195px;
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      flex-shrink: 0;
+    }
+
+    /* Each "section" inside the sidebar has a label + content */
+    .sec       { padding: 11px 10px; border-bottom: 1px solid var(--border); }
+    .sec-label { font-size: 9px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-bottom: 7px; }
+
+    /* Tool buttons inside the sidebar */
+    .tool-btn {
+      display: flex; align-items: center; gap: 7px;
+      width: 100%; padding: 6px 8px;
+      border-radius: 6px; border: 1px solid transparent;
+      background: transparent; color: var(--text);
+      font-family: inherit; font-size: 11px;
+      cursor: pointer; transition: all .12s;
+      margin-bottom: 2px; text-align: left;
+    }
+    .tool-btn:hover  { background: #21262d; }
+    /* .active is added/removed by setTool() to highlight the chosen tool */
+    .tool-btn.active { background: rgba(47,129,247,.15); border-color: var(--accent); color: var(--accent); }
+    .ti { width: 18px; text-align: center; font-size: 13px; } /* icon column */
+
+    /* Legend rows (coloured swatch + label) */
+    .legend-row { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--muted); margin-bottom: 3px; }
+    .swatch     { width: 10px; height: 10px; border-radius: 2px; border: 1px solid rgba(255,255,255,.15); flex-shrink: 0; }
+    .dot        { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+
+    /* Small statistics display at the bottom of the sidebar */
+    .stat-row { font-size: 10px; color: var(--muted); line-height: 1.9; }
+    .stat-row b { color: var(--text); }
+
+    /* ════════════════════════════════════════════════════════════════════
+       CANVAS WRAPPER
+       overflow:auto allows scrolling/panning when the canvas is larger
+       than the viewport. The light grey background makes the white
+       canvas stand out. padding adds space around the canvas edges.
+    ════════════════════════════════════════════════════════════════════ */
+    #canvas-wrap {
+      flex: 1;
+      overflow: auto;
+      background: #c8d3db;
+      padding: 20px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: flex-start;
+    }
+    /* Drop shadow around the canvas to make it feel like a piece of paper */
+    #canvas-container { box-shadow: 0 4px 28px rgba(0,0,0,.35); }
+
+    /* ════════════════════════════════════════════════════════════════════
+       STATUS BAR
+       Thin strip along the bottom showing tool name, cursor position,
+       and a contextual hint about what the current tool does.
+    ════════════════════════════════════════════════════════════════════ */
+    #statusbar {
+      height: 26px;
+      background: var(--panel);
+      border-top: 1px solid var(--border);
+      display: flex; align-items: center;
+      padding: 0 14px; gap: 20px;
+      font-size: 10px; color: var(--muted);
+      flex-shrink: 0;
+    }
+    #statusbar b   { color: var(--text); }
+    #status-hint   { margin-left: auto; } /* push hint text to the right */
+
+    /* ════════════════════════════════════════════════════════════════════
+       ROOM CONFIGURATION MODAL
+       Appears when the user finishes drawing a room rectangle.
+       display:none by default; adding class "show" makes it visible.
+       The overlay darkens the page behind the dialog.
+    ════════════════════════════════════════════════════════════════════ */
+    #modal-overlay {
+      display: none;
+      position: fixed; inset: 0;        /* cover the entire viewport */
+      background: rgba(0,0,0,.65);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+    }
+    #modal-overlay.show { display: flex; }  /* toggle visibility */
+
+    #modal {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px; width: 310px;
+      box-shadow: 0 16px 50px rgba(0,0,0,.6);
+    }
+    #modal h3 { font-size: 13px; margin-bottom: 14px; }
+
+    /* Form field wrapper */
+    .fl         { margin-bottom: 11px; }
+    .fl label   { display: block; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 4px; }
+    .fl input[type=text], .fl select {
+      width: 100%; padding: 6px 9px;
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 6px; color: var(--text);
+      font-family: inherit; font-size: 11px; outline: none;
+    }
+    .fl input:focus, .fl select:focus { border-color: var(--accent); }
+
+    /* Checkbox group for access control */
+    .cbgroup { display: flex; flex-wrap: wrap; gap: 8px; }
+    .cbgroup label { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text); text-transform: none; letter-spacing: 0; cursor: pointer; }
+
+    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+  </style>
+</head>
+
+<body>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       TOP BAR HTML
+       The .spacer div pushes the buttons to the right using flexbox.
+  ══════════════════════════════════════════════════════════════════ -->
+  <div id="topbar">
+    <div class="logo">⊞ FloorPlan</div>
+    <div class="sub">Hospital Simulation Layout Designer</div>
+    <div class="spacer"></div>
+    <button class="btn danger"  onclick="clearAll()">⟳ Clear</button>
+    <button class="btn primary" onclick="exportJSON()">⬇ Export JSON</button>
+  </div>
+
+  <div id="main">
+
+    <!-- ════════════════════════════════════════════════════════════════
+         SIDEBAR HTML
+         Each button calls setTool() with its tool name.
+         The id must match "tool-" + toolName so setTool() can find it.
+    ════════════════════════════════════════════════════════════════ -->
+    <div id="sidebar">
+
+      <div class="sec">
+        <div class="sec-label">Draw Tools</div>
+        <!-- id="tool-select" → setTool looks for document.getElementById('tool-' + t) -->
+        <button class="tool-btn active" id="tool-select"       onclick="setTool('select')">      <span class="ti">↖</span> Select / Move</button>
+        <button class="tool-btn"        id="tool-wall"         onclick="setTool('wall')">         <span class="ti">✏</span> Draw Wall</button>
+        <button class="tool-btn"        id="tool-room"         onclick="setTool('room')">         <span class="ti">⬜</span> Draw Room</button>
+        <button class="tool-btn"        id="tool-erase"        onclick="setTool('erase')">        <span class="ti">✕</span> Erase</button>
+      </div>
+
+      <div class="sec">
+        <div class="sec-label">Place Objects</div>
+        <button class="tool-btn" id="tool-bed"           onclick="setTool('bed')">         <span class="ti">🛏</span> Bed</button>
+        <button class="tool-btn" id="tool-handwash"      onclick="setTool('handwash')">    <span class="ti">🚿</span> Hand Wash</button>
+        <button class="tool-btn" id="tool-nursestation"  onclick="setTool('nursestation')"><span class="ti">🏥</span> Nurse Station</button>
+        <button class="tool-btn" id="tool-door"          onclick="setTool('door')">        <span class="ti">🚪</span> Door</button>
+      </div>
+
+      <div class="sec">
+        <div class="sec-label">Room Type Legend</div>
+        <div class="legend-row"><span class="swatch" style="background:rgba(33,136,255,.25);border-color:#2188ff"></span>Ward</div>
+        <div class="legend-row"><span class="swatch" style="background:rgba(248,81,73,.25);border-color:#f85149"></span>ICU</div>
+        <div class="legend-row"><span class="swatch" style="background:rgba(63,185,80,.25);border-color:#3fb950"></span>Reception</div>
+        <div class="legend-row"><span class="swatch" style="background:rgba(210,153,34,.25);border-color:#d29918"></span>Corridor</div>
+        <div class="legend-row"><span class="swatch" style="background:rgba(163,113,247,.25);border-color:#a371f7"></span>Staff Only</div>
+        <div class="legend-row"><span class="swatch" style="background:rgba(56,189,248,.25);border-color:#38bdf8"></span>Waiting Area</div>
+      </div>
+
+      <div class="sec">
+        <div class="sec-label">Object Legend</div>
+        <div class="legend-row"><span class="dot" style="background:#2f81f7"></span>Bed</div>
+        <div class="legend-row"><span class="dot" style="background:#3fb950"></span>Hand Wash</div>
+        <div class="legend-row"><span class="dot" style="background:#f85149"></span>Nurse Station</div>
+        <div class="legend-row"><span class="dot" style="background:#d29918"></span>Door</div>
+      </div>
+
+      <div class="sec">
+        <div class="sec-label">Stats</div>
+        <div class="stat-row">
+          Grid: <b id="inf-size">50 × 36</b><br>
+          Walls: <b id="inf-walls">0</b><br>
+          Rooms: <b id="inf-rooms">0</b><br>
+          Objects: <b id="inf-objs">0</b>
+        </div>
+      </div>
+
+      <div class="sec">
+        <div class="sec-label">Shortcuts</div>
+        <div class="stat-row" style="line-height:2">
+          <b>S</b> Select &nbsp;<b>W</b> Wall<br>
+          <b>R</b> Room &nbsp;&nbsp;<b>E</b> Erase<br>
+          <b>B</b> Bed &nbsp;&nbsp;&nbsp;<b>H</b> Handwash<br>
+          <b>Del</b> Delete selected<br>
+          <b>Esc</b> Cancel
+        </div>
+      </div>
+
+    </div><!-- /sidebar -->
+
+    <!-- ════════════════════════════════════════════════════════════════
+         CANVAS AREA
+         The <canvas id="c"> is what Fabric.js takes over.
+         It's wrapped in two divs so we can apply overflow-scroll
+         and box-shadow independently.
+    ════════════════════════════════════════════════════════════════ -->
+    <div id="canvas-wrap">
+      <div id="canvas-container">
+        <canvas id="c"></canvas>
+        <!-- Fabric replaces this with two <canvas> elements (one for content,
+             one for the interactive selection overlay) -->
+      </div>
+    </div>
+
+  </div><!-- /main -->
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       STATUS BAR HTML
+  ══════════════════════════════════════════════════════════════════ -->
+  <div id="statusbar">
+    <span>Tool: <b id="st-tool">Select</b></span>
+    <span>Cursor: <b id="st-pos">—</b></span>
+    <span>Cell size: <b>20 px</b></span>
+    <span id="status-hint">Click to select · drag to move objects</span>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       ROOM CONFIGURATION MODAL HTML
+       Shown after the user finishes drawing a room rectangle.
+       Clicking the overlay background also cancels (see JS below).
+  ══════════════════════════════════════════════════════════════════ -->
+  <div id="modal-overlay">
+    <div id="modal">
+      <h3>Configure Room</h3>
+
+      <div class="fl">
+        <label>Room Name</label>
+        <input type="text" id="room-name" placeholder="e.g. Ward A, ICU 1, Corridor B…">
+      </div>
+
+      <div class="fl">
+        <label>Room Type</label>
+        <select id="room-type">
+          <option value="ward">Ward</option>
+          <option value="icu">ICU</option>
+          <option value="reception">Reception</option>
+          <option value="corridor">Corridor</option>
+          <option value="staff">Staff Only</option>
+          <option value="waiting">Waiting Area</option>
+        </select>
+      </div>
+
+      <div class="fl">
+        <label>Access Control — who may enter?</label>
+        <div class="cbgroup">
+          <!-- Each checkbox maps to an agent_type in your Mesa simulation -->
+          <label><input type="checkbox" id="ac-staff"   checked> Staff</label>
+          <label><input type="checkbox" id="ac-patient">         Patient</label>
+          <label><input type="checkbox" id="ac-visitor">         Visitor</label>
+          <label><input type="checkbox" id="ac-cleaner">         Cleaner</label>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn"         onclick="cancelRoom()">Cancel</button>
+        <button class="btn primary" onclick="confirmRoom()">Add Room</button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       FABRIC.JS — loaded from CDN
+       Because it's in a <script src="...">, the browser downloads and
+       runs this before our own code below. That means `fabric` is
+       available globally by the time our script executes.
+  ══════════════════════════════════════════════════════════════════ -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+
+  <script>
+  /* ════════════════════════════════════════════════════════════════════════════
+     SECTION 1 — GRID CONSTANTS
+     ════════════════════════════════════════════════════════════════════════════
+     GRID  = pixels per cell. Every coordinate drawn on screen is a multiple
+             of this number (we "snap" to it). 20px is big enough to be
+             clickable but small enough for fine-grained layouts.
+
+     COLS / ROWS = dimensions of the floor plan in grid cells.
+     W / H       = canvas size in pixels.
+
+     These constants define the coordinate system for EVERYTHING:
+       • Grid lines are drawn at multiples of GRID
+       • Mouse positions are rounded to multiples of GRID
+       • Exported JSON uses cell-unit coordinates (pixels ÷ GRID)
+
+     So a wall at pixel (200,140)→(400,140) exports as {x1:10,y1:7,x2:20,y2:7}.
+     Your Mesa model then reads those cell units directly.
+  ════════════════════════════════════════════════════════════════════════════ */
+  const GRID = 20;     // pixels per cell
+  const COLS = 50;     // floor plan width  in cells
+  const ROWS = 36;     // floor plan height in cells
+  const W    = COLS * GRID;   // 1000 px
+  const H    = ROWS * GRID;   // 720  px
+
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     SECTION 2 — APP STATE VARIABLES
+     ════════════════════════════════════════════════════════════════════════════
+     These are the only mutable variables that drive the editor's behaviour.
+     Keeping state minimal and explicit makes the logic much easier to follow.
+  ════════════════════════════════════════════════════════════════════════════ */
+
+  let tool    = 'select';  // which tool is currently active (string)
+  let drawing = false;     // true while the user is dragging (mouse held down)
+  let startPt = null;      // {x, y} in pixels — where the current drag started
+  let preview = null;      // the temporary Fabric object shown while dragging
+                           //   (removed and re-created on every mouse:move)
+
+  // Holds the pixel dimensions of a room rectangle while the modal is open.
+  // Set when the user finishes drawing a room; cleared after confirmRoom().
+  let pendingRectData = null;
+
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     SECTION 3 — THE DATA STORE
+     ════════════════════════════════════════════════════════════════════════════
+     This plain object is the "source of truth" for the floor plan data.
+     It is completely independent of the canvas visuals — it only holds
+     the information your Mesa model needs.
+
+     Every time the user adds or removes something from the canvas, we
+     also add/remove the corresponding record from this store.
+
+     On export, we simply JSON.stringify(store) and download it.
+
+     STRUCTURE:
+       walls   → array of {x1,y1,x2,y2}  (cell units, integers)
+       rooms   → array of {id, name, type, access[], x,y,w,h}  (cell units)
+       objects → array of {type, x, y}   (cell units)
+  ════════════════════════════════════════════════════════════════════════════ */
+  const store = {
+    walls:   [],
+    rooms:   [],
+    objects: [],
+  };
+
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     SECTION 4 — FABRIC CANVAS SETUP
+     ════════════════════════════════════════════════════════════════════════════
+     fabric.Canvas takes over the <canvas id="c"> element.
+     It creates a two-layer system internally:
+       • A lower canvas for static content (lines, rectangles, etc.)
+       • An upper canvas for the interactive selection overlay
+
+     selection:false  → disables Fabric's built-in drag-to-select marquee.
+                         We manage our own tool modes instead.
+     backgroundColor  → the floor plan "paper" colour (white).
+  ════════════════════════════════════════════════════════════════════════════ */
+  const canvas = new fabric.Canvas('c', {
+    width:           W,
+    height:          H,
+    selection:       false,
+    backgroundColor: '#ffffff',
+  });
+
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     SECTION 5 — COORDINATE HELPERS
+     ════════════════════════════════════════════════════════════════════════════
+     snap(v)  — rounds any pixel value to the nearest grid line.
+                Example: snap(37) → 40, snap(22) → 20
+
+     snapP(pt) — applies snap() to both x and y of a {x,y} point object.
+                 We call this on every raw mouse coordinate so every drawn
+                 object always sits exactly on a grid intersection.
+
+     toG(px)  — converts a pixel value to grid-cell units for export.
+                Example: toG(200) → 10  (200 / 20 = 10 cells)
+  ════════════════════════════════════════════════════════════════════════════ */
+  const snap  = v  => Math.round(v / GRID) * GRID;
+  const snapP = pt => ({ x: snap(pt.x), y: snap(pt.y) });
+  const toG   = px => px / GRID;
+
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     SECTION 6 — STYLE LOOKUP TABLES
+     ════════════════════════════════════════════════════════════════════════════
+     Rather than hardcoding colours inside drawing functions, we define them
+     here in one place. This makes it easy to change a room's colour without
+     hunting through the code.
+
+     ROOM_COLS maps room type → {fill, stroke}.
+       fill   = semi-transparent background colour of the rectangle
+       stroke = border colour (also used for the text labels)
+
+     OBJ_COLS maps object type → solid dot colour.
+     OBJ_EMOJI maps object type → emoji shown inside the dot.
+  ════════════════════════════════════════════════════════════════════════════ */
+  const ROOM_COLS = {
+    ward:      { fill: 'rgba(33,136,255,.15)',  stroke: '#2188ff' },
+    icu:       { fill: 'rgba(248,81,73,.15)',   stroke: '#f85149' },
+    reception: { fill: 'rgba(63,185,80,.15)',   stroke: '#3fb950' },
+    corridor:  { fill: 'rgba(210,153,34,.15)',  stroke: '#d29918' },
+    staff:     { fill: 'rgba(163,113,247,.15)', stroke: '#a371f7' },
+    waiting:   { fill: 'rgba(56,189,248,.15)',  stroke: '#38bdf8' },
+  };
+
+  const OBJ_COLS = {
+    bed:          '#2f81f7',
+    handwash:     '#3fb950',
+    nursestation: '#f85149',
+    door:         '#d29918',
+  };
+
+  const OBJ_EMOJI = {
+    bed: '🛏', handwash: '🚿', nursestation: '🏥', door: '🚪',
+  };
+
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     SECTION 7 — GRID BACKGROUND
+     ════════════════════════════════════════════════════════════════════════════
+     We draw horizontal and vertical lines across the whole canvas to form
+     the visual grid. These are fabric.Line objects added at the very bottom
+     of the canvas stack.
+
+     KEY DETAILS:
+       • Every 5th line is slightly thicker/darker (major grid lines) to make
+         counting cells easier — same pattern used in graph paper.
+       • selectable:false and evented:false means the erase tool and selection
+         tool will ignore these lines completely. They are purely decorative.
+       • data:{kind:'grid'} is a tag we attach to every Fabric object so our
+         erase tool can skip them (it checks kind !== 'grid').
+
+     drawGrid() is also called by clearAll() to restore the grid after a reset.
+  ════════════════════════════════════════════════════════════════════════════ */
+  function drawGrid() {
+    // Vertical lines — one per column including the right border
+    for (let x = 0; x <= COLS; x++) {
+      canvas.add(new fabric.Line(
+        [x * GRID, 0, x * GRID, H],   // [x1, y1, x2, y2]
+        {
+          stroke:      x % 5 === 0 ? '#c0cad4' : '#e4e9ed',
+          strokeWidth: x % 5 === 0 ? 1 : 0.5,
+          selectable:  false,
+          evented:     false,
+          data:        { kind: 'grid' },
+        }
+      ));
+    }
+    // Horizontal lines — one per row including the bottom border
+    for (let y = 0; y <= ROWS; y++) {
+      canvas.add(new fabric.Line(
+        [0, y * GRID, W, y * GRID],
+        {
+          stroke:      y % 5 === 0 ? '#c0cad4' : '#e4e9ed',
+          strokeWidth: y % 5 === 0 ? 1 : 0.5,
+          selectable:  false,
+          evented:     false,
+          data:        { kind: 'grid' },
+        }
+      ));
+    }
+  }
+  drawGrid(); // call immediately on page load
+
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     SECTION 8 — TOOL MANAGEMENT
+     ════════════════════════════════════════════════════════════════════════════
+     setTool(t) is the single function that switches between all tool modes.
+
+     It does four things:
+       1. Updates the `tool` variable
+       2. Updates the sidebar button highlights (active CSS class)
+       3. Updates the status bar text
+       4. Configures Fabric's selectable/cursor behaviour
+
+     WHY CONFIGURE FABRIC OBJECTS?
+       In select mode, we want objects to be draggable.
+       In any drawing/erase mode, we don't want accidental selections.
+       We loop through all Fabric objects and set selectable based on whether
+       the object has data.movable = true (only placed objects have this).
+
+     HINTS: Each tool has a short description shown in the status bar so the
+     user always knows what to do with the current tool.
+  ════════════════════════════════════════════════════════════════════════════ */
+  const HINTS = {
+    select:       'Click to select · drag to move objects',
+    wall:         'Click & drag to draw a wall — snaps to grid intersections',
+    room:         'Click & drag to draw a room rectangle, then configure it',
+    erase:        'Click any wall, room or object to permanently delete it',
+    bed:          'Click anywhere on the canvas to place a bed',
+    handwash:     'Click anywhere on the canvas to place a hand wash station',
+    nursestation: 'Click anywhere on the canvas to place a nurse station',
+    door:         'Click anywhere on the canvas to place a door',
+  };
+
+  function setTool(t) {
+    tool = t;
+
+    // 1. Update sidebar button highlight
+    document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+    const btn = document.getElementById('tool-' + t);
+    if (btn) btn.classList.add('active');
+
+    // 2. Update status bar
+    document.getElementById('st-tool').textContent   = t.charAt(0).toUpperCase() + t.slice(1);
+    document.getElementById('status-hint').textContent = HINTS[t] || '';
+
+    // 3. Configure Fabric's selection behaviour
+    const isSelect = (t === 'select');
+    canvas.selection = isSelect;
+    canvas.forEachObject(obj => {
+      // Only objects explicitly marked movable can be selected/dragged
+      obj.selectable = isSelect && !!obj.data?.movable;
+    });
+
+    // 4. Change cursor style
+    canvas.defaultCursor = isSelect     ? 'default'     :
+                           t === 'erase'? 'not-allowed'  : 'crosshair';
+
+    canvas.discardActiveObject();
+    canvas.renderAll();
+  }
+
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     SECTION 9 — MOUSE EVENT: mouse:move
+     ════════════════════════════════════════════════════════════════════════════
+     This fires continuously as the cursor moves over the canvas.
+
+     TWO JOBS:
+       1. Always update the cursor position display in the status bar.
+       2. While drawing (mouse held down), show a live "preview" of what
+          will be created. This is the rubber-band / ghost line/rectangle
+          the user sees as they drag.
+
+     PREVIEW TECHNIQUE:
+       Each time mouse:move fires during a drag, we:
+         a) Remove the previous preview object from the canvas
+         b) Create a new one from startPt to the current snapped position
+         c) Add it to the canvas
+       This makes it look like the shape is stretching in real time.
+       The preview is given selectable:false and evented:false so it doesn't
+       interfere with anything.
+  ════════════════════════════════════════════════════════════════════════════ */
+  canvas.on('mouse:move', e => {
+    // canvas.getPointer() converts the browser mouse event into canvas
+    // coordinates (accounting for canvas position, scroll, etc.)
+    const sp = snapP(canvas.getPointer(e.e));
+
+    // Update cursor position in status bar (grid units, not pixels)
+    document.getElementById('st-pos').textContent = `${toG(sp.x)}, ${toG(sp.y)}`;
+
+    // If we're not currently drawing, nothing else to do here
+    if (!drawing || !startPt) return;
+
+    // ── Wall preview: a dashed line from start to current cursor ──
+    if (tool === 'wall') {
+      if (preview) canvas.remove(preview);  // remove old preview
+      preview = new fabric.Line(
+        [startPt.x, startPt.y, sp.x, sp.y],
+        {
+          stroke:       '#1a1d23',
+          strokeWidth:  3,
+          strokeDashArray: [6, 4],   // dashed to indicate it's not final yet
+          strokeLineCap: 'round',
+          selectable:   false,
+          evented:      false,
+        }
+      );
+      canvas.add(preview);
+    }
+
+    // ── Room preview: a dashed rectangle ──
+    if (tool === 'room') {
+      if (preview) canvas.remove(preview);
+
+      // Calculate top-left corner regardless of which direction the user dragged
+      const rx = Math.min(startPt.x, sp.x);
+      const ry = Math.min(startPt.y, sp.y);
+      const rw = Math.abs(sp.x - startPt.x);
+      const rh = Math.abs(sp.y - startPt.y);
+
+      preview = new fabric.Rect({
+        left: rx, top: ry, width: rw, height: rh,
+        fill:            'rgba(47,129,247,.08)',
+        stroke:          '#2f81f7',
+        strokeWidth:     1.5,
+        strokeDashArray: [5, 4],
+        selectable:      false,
+        evented:         false,
+      });
+      canvas.add(preview);
+    }
+
+    canvas.renderAll();
+  });
+
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     SECTION 10 — MOUSE EVENT: mouse:down
+     ════════════════════════════════════════════════════════════════════════════
+     Fires once when the mouse button is pressed.
+
+     RESPONSIBILITIES:
+       • In select mode: do nothing (Fabric handles selection natively)
+       • In erase mode:  find what's under the cursor and delete it
+       • In object placement modes: place the object immediately (no drag needed)
+       • In draw modes (wall/room): record the start point and set drawing=true
+
+     IMPORTANT: We return early for 'select' mode so Fabric's own selection
+     system can work unimpeded.
+  ════════════════════════════════════════════════════════════════════════════ */
+  canvas.on('mouse:down', e => {
+    // Let Fabric handle select mode natively — don't interfere
+    if (tool === 'select') return;
+
+    const sp = snapP(canvas.getPointer(e.e));
+
+    // ── ERASE MODE ──────────────────────────────────────────────────────────
+    if (tool === 'erase') {
+      // canvas.findTarget() returns the topmost Fabric object under the cursor
+      const target = canvas.findTarget(e.e);
+
+      if (target && target.data?.kind && target.data.kind !== 'grid') {
+        // Delete associated text labels first (stored in data.labels array)
+        if (target.data.labels) {
+          target.data.labels.forEach(label => canvas.remove(label));
+        }
+        // Remove the main object from the canvas
+        canvas.remove(target);
+        // Remove the corresponding record from our data store
+        removeFromStore(target.data);
+        updateInfo();
+        canvas.renderAll();
+      }
+      return; // don't fall through to drawing logic
+    }
+
+    // ── OBJECT PLACEMENT MODES ──────────────────────────────────────────────
+    // These tools place an item on a single click — no drag required
+    if (['bed', 'handwash', 'nursestation', 'door'].includes(tool)) {
+      placeObject(tool, sp.x, sp.y);
+      return;
+    }
+
+    // ── DRAWING MODES (wall / room) ─────────────────────────────────────────
+    // Record the start point and activate the dragging state
+    drawing = true;
+    startPt = sp;
+  });
+
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     SECTION 11 — MOUSE EVENT: mouse:up
+     ════════════════════════════════════════════════════════════════════════════
+     Fires when the mouse button is released.
+
+     This is where we COMMIT a drawn shape — remove the preview and create
+     the real permanent object.
+
+     For walls: create immediately and save to store.
+     For rooms: save the dimensions in pendingRectData and open the modal.
+                The room is only added after the user fills in the form.
+  ════════════════════════════════════════════════════════════════════════════ */
+  canvas.on('mouse:up', e => {
+    if (!drawing) return;   // mouse:up fires even without a preceding mouse:down
+    drawing = false;
+
+    const sp = snapP(canvas.getPointer(e.e));
+
+    // Remove the preview object (the dashed guide) from the canvas
+    if (preview) { canvas.remove(preview); preview = null; }
+
+    // ── Commit wall ──────────────────────────────────────────────────────────
+    if (tool === 'wall') {
+      // Ignore zero-length lines (the user just clicked without dragging)
+      if (startPt.x === sp.x && startPt.y === sp.y) { startPt = null; return; }
+      addWall(startPt, sp);
+    }
+
+    // ── Commit room ──────────────────────────────────────────────────────────
+    if (tool === 'room') {
+      const rx = Math.min(startPt.x, sp.x);
+      const ry = Math.min(startPt.y, sp.y);
+      const rw = Math.abs(sp.x - startPt.x);
+      const rh = Math.abs(sp.y - startPt.y);
+
+      // Only open modal if the drawn rectangle is at least 1 cell in each direction
+      if (rw >= GRID && rh >= GRID) {
+        pendingRectData = { rx, ry, rw, rh };  // save for confirmRoom()
+        openModal();
+      }
+    }
+
+    startPt = null;
+  });
+
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     SECTION 12 — addWall(a, b)
+     ════════════════════════════════════════════════════════════════════════════
+     Creates a permanent wall line on the canvas and stores its data.
+
+     PARAMETERS:
+       a, b — {x, y} pixel coordinates of the two endpoints
+
+     HOW IT WORKS:
+       1. Convert pixel coordinates to grid units and push to store.walls
+       2. Create a fabric.Line with evented:true so the erase tool can
+          detect clicks on it
+       3. Attach a data object to the line — this is how we link the
+          visual object back to its store record so we can remove both
+          when the user erases it
+
+     WHY data.labels = [] ?
+       Walls have no labels, but we give them an empty labels array anyway
+       so the erase handler can call data.labels.forEach(...) without
+       needing a special case for walls. Consistency reduces bugs.
+  ════════════════════════════════════════════════════════════════════════════ */
+  function addWall(a, b) {
+    // Create the store record (grid units)
+    const wallRecord = {
+      x1: toG(a.x), y1: toG(a.y),
+      x2: toG(b.x), y2: toG(b.y),
+    };
+    store.walls.push(wallRecord);
+
+    // Create the visual Fabric object (pixel units)
+    const line = new fabric.Line(
+      [a.x, a.y, b.x, b.y],
+      {
+        stroke:        '#1a1d23',
+        strokeWidth:   3,
+        strokeLineCap: 'round',
+        selectable:    false,
+        evented:       true,          // must be true so erase tool can click it
+        hoverCursor:   'pointer',
+        data: {
+          kind:   'wall',
+          ref:    wallRecord,   // reference to the store record for removal
+          labels: [],           // empty — walls have no text labels
+        },
+      }
+    );
+    canvas.add(line);
+    updateInfo();
+    canvas.renderAll();
+  }
+
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     SECTION 13 — placeObject(type, px, py)
+     ════════════════════════════════════════════════════════════════════════════
+     Places a bed, hand wash station, nurse station, or door at (px, py).
+
+     VISUAL DESIGN:
+       Each object is a fabric.Group containing two things:
+         • A coloured circle (the "pin" background)
+         • An emoji text label centred on top of the circle
+       Grouping them means they always move together as one unit.
+
+     data.movable = true
+       This flag is what setTool() uses to decide whether an object can be
+       selected and dragged in select mode. Wall lines and room rectangles
+       don't have this flag, so they stay fixed.
+  ════════════════════════════════════════════════════════════════════════════ */
+  function placeObject(type, px, py) {
+    // Store record
+    const rec = { type, x: toG(px), y: toG(py) };
+    store.objects.push(rec);
+
+    // Visual: circle + emoji grouped together
+    const circle = new fabric.Circle({
+      radius:      11,
+      fill:        OBJ_COLS[type],
+      stroke:      '#ffffff',
+      strokeWidth: 2,
+      originX:     'center',
+      originY:     'center',
+    });
+
+    const emoji = new fabric.Text(OBJ_EMOJI[type], {
+      fontSize:  11,
+      originX:   'center',
+      originY:   'center',
+      top:       1,   // tiny offset to vertically centre the emoji visually
+    });
+
+    const group = new fabric.Group([circle, emoji], {
+      left:        px - 11,   // offset so the group centre lands on (px, py)
+      top:         py - 11,
+      selectable:  false,     // overridden to true in select mode via setTool
+      hasControls: false,     // hide resize handles
+      hasBorders:  false,     // hide selection border
+      evented:     true,
+      hoverCursor: 'pointer',
+      data: {
+        kind:    'object',
+        type:    type,
+        ref:     rec,
+        labels:  [],
+        movable: true,   // ← this is the key flag for select-mode dragging
+      },
+    });
+
+    canvas.add(group);
+    updateInfo();
+    canvas.renderAll();
+  }
+
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     SECTION 14 — removeFromStore(data)
+     ════════════════════════════════════════════════════════════════════════════
+     Given the .data object attached to a Fabric object, removes the
+     corresponding record from store.walls / store.rooms / store.objects.
+
+     We use indexOf + splice rather than filter because we need to remove
+     the exact object reference (not just a matching value), and because
+     we're removing exactly one item.
+
+     Called by: the erase tool (mouse:down handler) and the Delete key handler.
+  ════════════════════════════════════════════════════════════════════════════ */
+  function removeFromStore(data) {
+    if (data.kind === 'wall') {
+      const i = store.walls.indexOf(data.ref);
+      if (i > -1) store.walls.splice(i, 1);
+
+    } else if (data.kind === 'room') {
+      const i = store.rooms.indexOf(data.ref);
+      if (i > -1) store.rooms.splice(i, 1);
+
+    } else if (data.kind === 'object') {
+      const i = store.objects.indexOf(data.ref);
+      if (i > -1) store.objects.splice(i, 1);
+    }
+  }
+
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     SECTION 15 — ROOM MODAL FUNCTIONS
+     ════════════════════════════════════════════════════════════════════════════
+     openModal()   — show the dialog (just adds the CSS "show" class)
+     cancelRoom()  — hide the dialog without creating anything
+     confirmRoom() — read the form, create the room rectangle + labels, save to store
+
+     WHY A MODAL?
+       Rooms need metadata (name, type, access list) that can't be encoded
+       in a drag gesture. The modal collects this info after the geometry
+       is drawn, before the room is committed.
+
+     LABEL LINKING:
+       confirmRoom creates THREE Fabric objects: the rect + two text labels.
+       The rect's data.labels array holds references to both text objects.
+       This lets the erase tool delete all three with a single click on the rect.
+  ════════════════════════════════════════════════════════════════════════════ */
+  function openModal() {
+    // Reset form to defaults
+    document.getElementById('room-name').value       = '';
+    document.getElementById('room-type').value       = 'ward';
+    document.getElementById('ac-staff').checked      = true;
+    document.getElementById('ac-patient').checked    = false;
+    document.getElementById('ac-visitor').checked    = false;
+    document.getElementById('ac-cleaner').checked    = false;
+
+    document.getElementById('modal-overlay').classList.add('show');
+    // Auto-focus the name field for immediate typing
+    setTimeout(() => document.getElementById('room-name').focus(), 80);
+  }
+
+  function cancelRoom() {
+    pendingRectData = null;
+    document.getElementById('modal-overlay').classList.remove('show');
+  }
+
+  function confirmRoom() {
+    if (!pendingRectData) return;
+
+    // Read form values
+    const name = document.getElementById('room-name').value.trim() || 'Room';
+    const type = document.getElementById('room-type').value;
+
+    // Build access array from checked checkboxes
+    const access = [];
+    if (document.getElementById('ac-staff').checked)   access.push('staff');
+    if (document.getElementById('ac-patient').checked)  access.push('patient');
+    if (document.getElementById('ac-visitor').checked)  access.push('visitor');
+    if (document.getElementById('ac-cleaner').checked)  access.push('cleaner');
+
+    const col            = ROOM_COLS[type] || ROOM_COLS.ward;
+    const { rx, ry, rw, rh } = pendingRectData;
+
+    // Store record (grid units)
+    const rec = {
+      id:     'room_' + Date.now(),   // unique ID using timestamp
+      name,
+      type,
+      access,
+      x: toG(rx), y: toG(ry),
+      w: toG(rw), h: toG(rh),
+    };
+    store.rooms.push(rec);
+
+    // ── Text labels ──────────────────────────────────────────────────────────
+    // Label 1: room name (top-left corner of the rectangle)
+    const nameLabel = new fabric.Text(name, {
+      left:       rx + 5,
+      top:        ry + 5,
+      fontSize:   10,
+      fill:       col.stroke,
+      fontFamily: 'monospace',
+      selectable: false,
+      evented:    false,
+      data:       { kind: 'roomlabel' },
+    });
+
+    // Label 2: access list (below the name)
+    const accessLabel = new fabric.Text(access.join(' · ') || 'no access', {
+      left:       rx + 5,
+      top:        ry + 18,
+      fontSize:   8,
+      fill:       col.stroke,
+      fontFamily: 'monospace',
+      opacity:    0.65,
+      selectable: false,
+      evented:    false,
+      data:       { kind: 'roomlabel' },
+    });
+
+    // ── Room rectangle ───────────────────────────────────────────────────────
+    const rect = new fabric.Rect({
+      left:        rx,
+      top:         ry,
+      width:       rw,
+      height:      rh,
+      fill:        col.fill,
+      stroke:      col.stroke,
+      strokeWidth: 1.5,
+      selectable:  false,
+      evented:     true,
+      hoverCursor: 'pointer',
+      data: {
+        kind:   'room',
+        ref:    rec,
+        labels: [nameLabel, accessLabel],  // ← linked for bulk deletion
+      },
+    });
+
+    // Add all three objects to canvas (rect first so it's behind the labels)
+    canvas.add(rect);
+    canvas.add(nameLabel);
+    canvas.add(accessLabel);
+
+    // Clean up and close modal
+    pendingRectData = null;
+    document.getElementById('modal-overlay').classList.remove('show');
+    updateInfo();
+    canvas.renderAll();
+  }
+
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     SECTION 16 — updateInfo()
+     ════════════════════════════════════════════════════════════════════════════
+     Refreshes the stats panel in the sidebar to show current counts.
+     Called after every add/remove operation.
+  ════════════════════════════════════════════════════════════════════════════ */
+  function updateInfo() {
+    document.getElementById('inf-walls').textContent   = store.walls.length;
+    document.getElementById('inf-rooms').textContent   = store.rooms.length;
+    document.getElementById('inf-objs').textContent    = store.objects.length;
+  }
+
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     SECTION 17 — clearAll()
+     ════════════════════════════════════════════════════════════════════════════
+     Wipes the entire canvas and resets the data store.
+
+     canvas.clear() removes every Fabric object INCLUDING the grid lines,
+     so we call drawGrid() immediately after to redraw them.
+     The background colour is also re-applied because canvas.clear() resets it.
+  ════════════════════════════════════════════════════════════════════════════ */
+  function clearAll() {
+    if (!confirm('Clear the entire floor plan? This cannot be undone.')) return;
+
+    canvas.clear();
+    canvas.backgroundColor = '#ffffff';
+
+    // Reset data store
+    store.walls   = [];
+    store.rooms   = [];
+    store.objects = [];
+
+    // Redraw the grid (canvas.clear() removed it)
+    drawGrid();
+    updateInfo();
+  }
+
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     SECTION 18 — exportJSON()
+     ════════════════════════════════════════════════════════════════════════════
+     Converts the store to a JSON string and triggers a browser download.
+
+     NO SERVER NEEDED — this is a pure client-side operation.
+
+     HOW THE DOWNLOAD WORKS:
+       1. JSON.stringify(out) converts the JS object to a formatted string
+       2. new Blob([...]) wraps the string as a binary file object
+       3. URL.createObjectURL(blob) creates a temporary browser URL for the file
+       4. We create an invisible <a> tag, set its href to that URL and its
+          download attribute to the desired filename, then programmatically click it
+       5. URL.revokeObjectURL() releases the memory after the download starts
+
+     THE OUTPUT FORMAT:
+       {
+         "width":  50,       ← grid columns (matches Mesa model width)
+         "height": 36,       ← grid rows    (matches Mesa model height)
+         "grid_size": 20,    ← px per cell  (for reference only, Mesa doesn't need it)
+         "walls": [
+           {"x1":5,"y1":2,"x2":5,"y2":10},   ← all in grid units
+           ...
+         ],
+         "rooms": [
+           {"id":"room_...", "name":"Ward A", "type":"ward",
+            "access":["staff","patient"], "x":1,"y":1,"w":8,"h":6},
+           ...
+         ],
+         "objects": [
+           {"type":"bed","x":3,"y":2},
+           {"type":"handwash","x":8,"y":1},
+           ...
+         ]
+       }
+
+     YOUR MESA MODEL reads this file like so:
+       import json
+       with open('floor_plan.json') as f:
+           fp = json.load(f)
+       walkable = {
+           (x, y)
+           for room in fp['rooms']
+           for x in range(room['x'], room['x'] + room['w'])
+           for y in range(room['y'], room['y'] + room['h'])
+       }
+       wall_segments = [(w['x1'],w['y1'],w['x2'],w['y2']) for w in fp['walls']]
+  ════════════════════════════════════════════════════════════════════════════ */
+  function exportJSON() {
+    const out = {
+      width:     COLS,
+      height:    ROWS,
+      grid_size: GRID,
+      walls:     store.walls,
+      rooms:     store.rooms,
+      objects:   store.objects,
+    };
+
+    const blob = new Blob(
+      [JSON.stringify(out, null, 2)],
+      { type: 'application/json' }
+    );
+    const url = URL.createObjectURL(blob);
+    const a   = document.createElement('a');
+    a.href     = url;
+    a.download = 'floor_plan.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     SECTION 19 — KEYBOARD SHORTCUTS
+     ════════════════════════════════════════════════════════════════════════════
+     Listening on 'document' means shortcuts work anywhere on the page.
+
+     We skip the handler if the user is typing in an <input> or <select>
+     (e.g. the room name field in the modal) to avoid accidental mode changes.
+
+     THE DELETE KEY:
+       In select mode, if an object is selected, pressing Delete removes it.
+       This mirrors the behaviour of professional design tools.
+       canvas.getActiveObject() returns the currently selected Fabric object.
+  ════════════════════════════════════════════════════════════════════════════ */
+  document.addEventListener('keydown', e => {
+    // Don't intercept keypresses while typing in form fields
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+
+    // Tool shortcuts
+    const shortcuts = {
+      's': 'select',
+      'w': 'wall',
+      'r': 'room',
+      'e': 'erase',
+      'b': 'bed',
+      'h': 'handwash',
+      'n': 'nursestation',
+      'd': 'door',
+    };
+    if (shortcuts[e.key]) {
+      setTool(shortcuts[e.key]);
+      return;
+    }
+
+    // Escape: cancel everything, go back to select
+    if (e.key === 'Escape') {
+      setTool('select');
+      cancelRoom();
+      return;
+    }
+
+    // Delete / Backspace: remove the selected object in select mode
+    if ((e.key === 'Delete' || e.key === 'Backspace') && tool === 'select') {
+      const active = canvas.getActiveObject();
+      if (active && active.data?.kind && active.data.kind !== 'grid') {
+        if (active.data.labels) active.data.labels.forEach(l => canvas.remove(l));
+        canvas.remove(active);
+        removeFromStore(active.data);
+        updateInfo();
+        canvas.renderAll();
+      }
+    }
+  });
+
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     SECTION 20 — MODAL OVERLAY CLICK-TO-DISMISS
+     ════════════════════════════════════════════════════════════════════════════
+     Clicking the dark overlay background (not the modal dialog itself)
+     cancels the room and closes the modal.
+
+     e.target is the element that was actually clicked.
+     e.currentTarget is the element the listener is attached to (the overlay).
+     We only dismiss if the user clicked the overlay itself, not its children.
+  ════════════════════════════════════════════════════════════════════════════ */
+  document.getElementById('modal-overlay').addEventListener('click', e => {
+    if (e.target === e.currentTarget) cancelRoom();
+  });
+
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     SECTION 21 — INITIALISATION
+     ════════════════════════════════════════════════════════════════════════════
+     The very last thing we do is call setTool('select') to put the editor
+     in a clean initial state — buttons highlighted correctly, cursor set,
+     Fabric configured.
+
+     Everything else was initialised as it was defined above.
+  ════════════════════════════════════════════════════════════════════════════ */
+  setTool('select');
+
+  </script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+{
+  "width": 50,
+  "height": 36,
+  "grid_size": 20,
+  "walls": [],
+  "rooms": [
+    { "id": "reception",  "name": "Reception",      "type": "reception", "access": ["staff","visitor","patient"], "x": 1,  "y": 1,  "w": 11, "h": 7  },
+    { "id": "waiting",    "name": "Waiting Area",   "type": "waiting",   "access": ["staff","visitor","patient"], "x": 13, "y": 1,  "w": 10, "h": 7  },
+    { "id": "pharmacy",   "name": "Pharmacy",       "type": "staff",     "access": ["staff"],                    "x": 24, "y": 1,  "w": 8,  "h": 7  },
+    { "id": "staff_room", "name": "Staff Room",     "type": "staff",     "access": ["staff"],                    "x": 33, "y": 1,  "w": 8,  "h": 7  },
+    { "id": "admin",      "name": "Admin",          "type": "staff",     "access": ["staff"],                    "x": 42, "y": 1,  "w": 7,  "h": 7  },
+    { "id": "corridor_a", "name": "Main Corridor",  "type": "corridor",  "access": ["staff","visitor","patient"], "x": 1,  "y": 8,  "w": 48, "h": 3  },
+    { "id": "ward_a",     "name": "Ward A",         "type": "ward",      "access": ["staff","patient"],           "x": 1,  "y": 11, "w": 14, "h": 9  },
+    { "id": "ward_b",     "name": "Ward B",         "type": "ward",      "access": ["staff","patient"],           "x": 16, "y": 11, "w": 14, "h": 9  },
+    { "id": "icu",        "name": "ICU",            "type": "icu",       "access": ["staff"],                    "x": 31, "y": 11, "w": 9,  "h": 9  },
+    { "id": "treatment",  "name": "Treatment",      "type": "ward",      "access": ["staff","patient"],           "x": 41, "y": 11, "w": 8,  "h": 9  },
+    { "id": "corridor_b", "name": "Side Corridor",  "type": "corridor",  "access": ["staff","visitor","patient"], "x": 1,  "y": 20, "w": 48, "h": 3  },
+    { "id": "ward_c",     "name": "Ward C",         "type": "ward",      "access": ["staff","patient"],           "x": 1,  "y": 23, "w": 14, "h": 11 },
+    { "id": "ward_d",     "name": "Ward D",         "type": "ward",      "access": ["staff","patient"],           "x": 16, "y": 23, "w": 14, "h": 11 },
+    { "id": "storage",    "name": "Storage",        "type": "staff",     "access": ["staff"],                    "x": 31, "y": 23, "w": 9,  "h": 11 },
+    { "id": "nurses",     "name": "Nurses Station", "type": "staff",     "access": ["staff"],                    "x": 41, "y": 23, "w": 8,  "h": 11 }
+  ],
+  "objects": []
+}
