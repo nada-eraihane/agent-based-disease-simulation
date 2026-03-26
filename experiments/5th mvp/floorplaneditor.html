@@ -1,0 +1,973 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hospital Floor Plan Editor</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      :root {
+        --bg: #0d1117;
+        --panel: #161b22;
+        --border: #30363d;
+        --text: #e6edf3;
+        --muted: #7d8590;
+        --accent: #2f81f7;
+        --accent2: #388bfd;
+      }
+
+      body {
+        font-family: "SF Mono", "Cascadia Code", "Consolas", monospace;
+        background: var(--bg);
+        color: var(--text);
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        user-select: none;
+      }
+
+      /* ── Top bar ── */
+      #topbar {
+        height: 48px;
+        background: var(--panel);
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+        gap: 10px;
+        flex-shrink: 0;
+      }
+      #topbar .logo {
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        color: var(--accent);
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+      #topbar .sub {
+        font-size: 11px;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .spacer {
+        flex: 1;
+      }
+
+      .btn {
+        padding: 5px 13px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: transparent;
+        color: var(--text);
+        font-family: inherit;
+        font-size: 11px;
+        cursor: pointer;
+        transition: all 0.15s;
+        white-space: nowrap;
+      }
+      .btn:hover {
+        background: #21262d;
+        border-color: #8b949e;
+      }
+      .btn.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+      }
+      .btn.primary:hover {
+        background: var(--accent2);
+      }
+      .btn.danger {
+        border-color: #f85149;
+        color: #f85149;
+      }
+      .btn.danger:hover {
+        background: rgba(248, 81, 73, 0.1);
+      }
+
+      /* ── Layout ── */
+      #main {
+        display: flex;
+        flex: 1;
+        overflow: hidden;
+      }
+
+      /* ── Sidebar ── */
+      #sidebar {
+        width: 190px;
+        background: var(--panel);
+        border-right: 1px solid var(--border);
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+        flex-shrink: 0;
+      }
+      .sec {
+        padding: 11px 10px;
+        border-bottom: 1px solid var(--border);
+      }
+      .sec-label {
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--muted);
+        margin-bottom: 7px;
+      }
+
+      .tool-btn {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        width: 100%;
+        padding: 6px 8px;
+        border-radius: 6px;
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--text);
+        font-family: inherit;
+        font-size: 11px;
+        cursor: pointer;
+        transition: all 0.12s;
+        margin-bottom: 2px;
+        text-align: left;
+      }
+      .tool-btn:hover {
+        background: #21262d;
+      }
+      .tool-btn.active {
+        background: rgba(47, 129, 247, 0.15);
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      .ti {
+        width: 18px;
+        text-align: center;
+        font-size: 13px;
+      }
+
+      .legend-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 10px;
+        color: var(--muted);
+        margin-bottom: 3px;
+      }
+      .swatch {
+        width: 10px;
+        height: 10px;
+        border-radius: 2px;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        flex-shrink: 0;
+      }
+      .dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+
+      .stat-row {
+        font-size: 10px;
+        color: var(--muted);
+        line-height: 1.9;
+      }
+      .stat-row b {
+        color: var(--text);
+      }
+
+      /* ── Canvas area ── */
+      #canvas-wrap {
+        flex: 1;
+        overflow: auto;
+        background: #d0d7de;
+        padding: 20px;
+        display: flex;
+        align-items: flex-start;
+        justify-content: flex-start;
+      }
+      #canvas-container {
+        box-shadow: 0 4px 28px rgba(0, 0, 0, 0.35);
+      }
+
+      /* ── Status bar ── */
+      #statusbar {
+        height: 26px;
+        background: var(--panel);
+        border-top: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        padding: 0 14px;
+        gap: 20px;
+        font-size: 10px;
+        color: var(--muted);
+        flex-shrink: 0;
+      }
+      #statusbar b {
+        color: var(--text);
+      }
+      #status-hint {
+        margin-left: auto;
+      }
+
+      /* ── Modal ── */
+      #modal-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.65);
+        z-index: 200;
+        align-items: center;
+        justify-content: center;
+      }
+      #modal-overlay.show {
+        display: flex;
+      }
+      #modal {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 20px;
+        width: 310px;
+        box-shadow: 0 16px 50px rgba(0, 0, 0, 0.6);
+      }
+      #modal h3 {
+        font-size: 13px;
+        margin-bottom: 14px;
+      }
+
+      .fl {
+        margin-bottom: 11px;
+      }
+      .fl label {
+        display: block;
+        font-size: 9px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        margin-bottom: 4px;
+      }
+      .fl input[type="text"],
+      .fl select {
+        width: 100%;
+        padding: 6px 9px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        color: var(--text);
+        font-family: inherit;
+        font-size: 11px;
+        outline: none;
+      }
+      .fl input:focus,
+      .fl select:focus {
+        border-color: var(--accent);
+      }
+
+      .cbgroup {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .cbgroup label {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 11px;
+        color: var(--text);
+        text-transform: none;
+        letter-spacing: 0;
+        cursor: pointer;
+      }
+      .cbgroup input {
+        cursor: pointer;
+      }
+
+      .modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Top bar -->
+    <div id="topbar">
+      <div class="logo">FloorPlan</div>
+      <div class="sub">Hospital Simulation Layout Designer</div>
+      <div class="spacer"></div>
+      <button class="btn danger" onclick="clearAll()">Clear</button>
+      <button class="btn" onclick="exportJSON()">Export JSON</button>
+    </div>
+
+    <div id="main">
+      <!-- Sidebar -->
+      <div id="sidebar">
+        <div class="sec">
+          <div class="sec-label">Tools</div>
+          <button
+            class="tool-btn active"
+            id="tool-select"
+            onclick="setTool('select')"
+          >
+            <span class="ti">↖</span> Select
+          </button>
+          <button class="tool-btn" id="tool-wall" onclick="setTool('wall')">
+            <span class="ti">✏</span> Draw Wall
+          </button>
+          <button class="tool-btn" id="tool-room" onclick="setTool('room')">
+            <span class="ti">⬜</span> Draw Room
+          </button>
+          <button class="tool-btn" id="tool-erase" onclick="setTool('erase')">
+            <span class="ti">✕</span> Erase
+          </button>
+        </div>
+
+        <div class="sec">
+          <div class="sec-label">Place Objects</div>
+          <button class="tool-btn" id="tool-bed" onclick="setTool('bed')">
+            <span class="ti">🛏</span> Bed
+          </button>
+          <button
+            class="tool-btn"
+            id="tool-handwash"
+            onclick="setTool('handwash')"
+          >
+            <span class="ti">🚿</span> Hand Wash
+          </button>
+          <button
+            class="tool-btn"
+            id="tool-nursestation"
+            onclick="setTool('nursestation')"
+          >
+            <span class="ti">🏥</span> Nurse Station
+          </button>
+          <button class="tool-btn" id="tool-door" onclick="setTool('door')">
+            <span class="ti">🚪</span> Door
+          </button>
+        </div>
+
+        <div class="sec">
+          <div class="sec-label">Room Types</div>
+          <div class="legend-row">
+            <span
+              class="swatch"
+              style="
+                background: rgba(33, 136, 255, 0.25);
+                border-color: #2188ff;
+              "
+            ></span
+            >Ward
+          </div>
+          <div class="legend-row">
+            <span
+              class="swatch"
+              style="background: rgba(248, 81, 73, 0.25); border-color: #f85149"
+            ></span
+            >ICU
+          </div>
+          <div class="legend-row">
+            <span
+              class="swatch"
+              style="background: rgba(63, 185, 80, 0.25); border-color: #3fb950"
+            ></span
+            >Reception
+          </div>
+          <div class="legend-row">
+            <span
+              class="swatch"
+              style="
+                background: rgba(210, 153, 34, 0.25);
+                border-color: #d29918;
+              "
+            ></span
+            >Corridor
+          </div>
+          <div class="legend-row">
+            <span
+              class="swatch"
+              style="
+                background: rgba(163, 113, 247, 0.25);
+                border-color: #a371f7;
+              "
+            ></span
+            >Staff Only
+          </div>
+          <div class="legend-row">
+            <span
+              class="swatch"
+              style="
+                background: rgba(56, 189, 248, 0.25);
+                border-color: #38bdf8;
+              "
+            ></span
+            >Waiting
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-label">Objects</div>
+          <div class="legend-row">
+            <span class="dot" style="background: #2f81f7"></span>Bed
+          </div>
+          <div class="legend-row">
+            <span class="dot" style="background: #3fb950"></span>Hand Wash
+          </div>
+          <div class="legend-row">
+            <span class="dot" style="background: #f85149"></span>Nurse Station
+          </div>
+          <div class="legend-row">
+            <span class="dot" style="background: #d29918"></span>Door
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-label">Info</div>
+          <div class="stat-row">
+            Grid: <b id="inf-size">50 × 36</b><br />
+            Walls: <b id="inf-walls">0</b><br />
+            Rooms: <b id="inf-rooms">0</b><br />
+            Objects: <b id="inf-objs">0</b>
+          </div>
+        </div>
+      </div>
+
+      <!-- Canvas -->
+      <div id="canvas-wrap">
+        <div id="canvas-container">
+          <canvas id="c"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Status bar -->
+    <div id="statusbar">
+      <span>Tool: <b id="st-tool">Select</b></span>
+      <span>Cursor: <b id="st-pos">—</b></span>
+      <span>Snap: <b>20 px</b></span>
+      <span id="status-hint">Click to select objects</span>
+    </div>
+
+    <!-- Room modal -->
+    <div id="modal-overlay">
+      <div id="modal">
+        <h3>Configure Room</h3>
+        <div class="fl">
+          <label>Room Name</label>
+          <input type="text" id="room-name" placeholder="e.g. Ward A, ICU 1…" />
+        </div>
+        <div class="fl">
+          <label>Room Type</label>
+          <select id="room-type">
+            <option value="ward">Ward</option>
+            <option value="icu">ICU</option>
+            <option value="reception">Reception</option>
+            <option value="corridor">Corridor</option>
+            <option value="staff">Staff Only</option>
+            <option value="waiting">Waiting Area</option>
+          </select>
+        </div>
+        <div class="fl">
+          <label>Access Control</label>
+          <div class="cbgroup">
+            <label><input type="checkbox" id="ac-staff" checked /> Staff</label>
+            <label><input type="checkbox" id="ac-patient" /> Patient</label>
+            <label><input type="checkbox" id="ac-visitor" /> Visitor</label>
+            <label><input type="checkbox" id="ac-cleaner" /> Cleaner</label>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn" onclick="cancelRoom()">Cancel</button>
+          <button class="btn primary" onclick="confirmRoom()">Add Room</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+    <script>
+      // ── Constants ────────────────────────────────────────────────────────────────
+      const GRID = 20;
+      const COLS = 51.5;
+      const ROWS = 22;
+      const W = COLS * GRID; // 1000
+      const H = ROWS * GRID; // 720
+
+      // ── App state ────────────────────────────────────────────────────────────────
+      let tool = "select";
+      let drawing = false;
+      let startPt = null;
+      let preview = null;
+      let pendingRectData = null;
+
+      const store = { walls: [], rooms: [], objects: [] };
+
+      // ── Fabric canvas ─────────────────────────────────────────────────────────────
+      const canvas = new fabric.Canvas("c", {
+        width: W,
+        height: H,
+        selection: false,
+        backgroundColor: "#ffffff",
+      });
+
+      // ── Grid background ───────────────────────────────────────────────────────────
+      function drawGrid() {
+        for (let x = 0; x <= COLS; x++) {
+          canvas.add(
+            new fabric.Line([x * GRID, 0, x * GRID, H], {
+              stroke: x % 5 === 0 ? "#c8d0da" : "#e8ecf0",
+              strokeWidth: x % 5 === 0 ? 1 : 0.5,
+              selectable: false,
+              evented: false,
+              data: { kind: "grid" },
+            }),
+          );
+        }
+        for (let y = 0; y <= ROWS; y++) {
+          canvas.add(
+            new fabric.Line([0, y * GRID, W, y * GRID], {
+              stroke: y % 5 === 0 ? "#c8d0da" : "#e8ecf0",
+              strokeWidth: y % 5 === 0 ? 1 : 0.5,
+              selectable: false,
+              evented: false,
+              data: { kind: "grid" },
+            }),
+          );
+        }
+      }
+      drawGrid();
+
+      // ── Helpers ───────────────────────────────────────────────────────────────────
+      const snap = (v) => Math.round(v / GRID) * GRID;
+      const snapP = (pt) => ({ x: snap(pt.x), y: snap(pt.y) });
+      const toG = (px) => px / GRID;
+
+      const ROOM_COLS = {
+        ward: { fill: "rgba(33,136,255,.15)", stroke: "#2188ff" },
+        icu: { fill: "rgba(248,81,73,.15)", stroke: "#f85149" },
+        reception: { fill: "rgba(63,185,80,.15)", stroke: "#3fb950" },
+        corridor: { fill: "rgba(210,153,34,.15)", stroke: "#d29918" },
+        staff: { fill: "rgba(163,113,247,.15)", stroke: "#a371f7" },
+        waiting: { fill: "rgba(56,189,248,.15)", stroke: "#38bdf8" },
+      };
+
+      const OBJ_COLS = {
+        bed: "#2f81f7",
+        handwash: "#3fb950",
+        nursestation: "#f85149",
+        door: "#d29918",
+      };
+      const OBJ_EMOJI = {
+        bed: "🛏",
+        handwash: "🚿",
+        nursestation: "🏥",
+        door: "🚪",
+      };
+
+      // ── Tool management ───────────────────────────────────────────────────────────
+      const HINTS = {
+        select: "Click to select · drag to move objects",
+        wall: "Click & drag to draw a wall — snaps to grid",
+        room: "Click & drag to draw a room area",
+        erase: "Click on any wall, room or object to delete it",
+        bed: "Click on canvas to place a bed",
+        handwash: "Click on canvas to place a hand wash station",
+        nursestation: "Click on canvas to place a nurse station",
+        door: "Click on canvas to place a door",
+      };
+
+      function setTool(t) {
+        tool = t;
+        document
+          .querySelectorAll(".tool-btn")
+          .forEach((b) => b.classList.remove("active"));
+        const btn = document.getElementById("tool-" + t);
+        if (btn) btn.classList.add("active");
+        document.getElementById("st-tool").textContent =
+          t.charAt(0).toUpperCase() + t.slice(1);
+        document.getElementById("status-hint").textContent = HINTS[t] || "";
+
+        const isSelect = t === "select";
+        canvas.selection = isSelect;
+        canvas.forEachObject((obj) => {
+          obj.selectable = isSelect && obj.data?.movable;
+        });
+        canvas.discardActiveObject();
+        canvas.defaultCursor = isSelect
+          ? "default"
+          : t === "erase"
+            ? "not-allowed"
+            : "crosshair";
+        canvas.renderAll();
+      }
+
+      // ── Mouse handlers ────────────────────────────────────────────────────────────
+      canvas.on("mouse:move", (e) => {
+        const sp = snapP(canvas.getPointer(e.e));
+        document.getElementById("st-pos").textContent =
+          `${toG(sp.x)}, ${toG(sp.y)}`;
+
+        if (!drawing || !startPt) return;
+
+        if (tool === "wall") {
+          if (preview) canvas.remove(preview);
+          preview = new fabric.Line([startPt.x, startPt.y, sp.x, sp.y], {
+            stroke: "#1a1d23",
+            strokeWidth: 3,
+            strokeLineCap: "round",
+            selectable: false,
+            evented: false,
+          });
+          canvas.add(preview);
+          canvas.renderAll();
+        }
+
+        if (tool === "room") {
+          if (preview) canvas.remove(preview);
+          const rx = Math.min(startPt.x, sp.x);
+          const ry = Math.min(startPt.y, sp.y);
+          const rw = Math.abs(sp.x - startPt.x);
+          const rh = Math.abs(sp.y - startPt.y);
+          preview = new fabric.Rect({
+            left: rx,
+            top: ry,
+            width: rw,
+            height: rh,
+            fill: "rgba(47,129,247,.1)",
+            stroke: "#2f81f7",
+            strokeWidth: 1.5,
+            strokeDashArray: [5, 4],
+            selectable: false,
+            evented: false,
+          });
+          canvas.add(preview);
+          canvas.renderAll();
+        }
+      });
+
+      canvas.on("mouse:down", (e) => {
+        // Don't intercept clicks on objects when in select mode
+        if (tool === "select") return;
+
+        const sp = snapP(canvas.getPointer(e.e));
+
+        // ── Erase ──
+        if (tool === "erase") {
+          const target = canvas.findTarget(e.e);
+          if (target && target.data?.kind && target.data.kind !== "grid") {
+            // Remove associated labels
+            if (target.data.labels)
+              target.data.labels.forEach((l) => canvas.remove(l));
+            canvas.remove(target);
+            // Remove from store
+            removeFromStore(target.data);
+            updateInfo();
+            canvas.renderAll();
+          }
+          return;
+        }
+
+        // ── Object placement ──
+        if (["bed", "handwash", "nursestation", "door"].includes(tool)) {
+          placeObject(tool, sp.x, sp.y);
+          return;
+        }
+
+        // ── Drawing modes ──
+        drawing = true;
+        startPt = sp;
+      });
+
+      canvas.on("mouse:up", (e) => {
+        if (!drawing) return;
+        drawing = false;
+
+        const sp = snapP(canvas.getPointer(e.e));
+        if (preview) {
+          canvas.remove(preview);
+          preview = null;
+        }
+
+        if (tool === "wall") {
+          if (startPt.x === sp.x && startPt.y === sp.y) {
+            startPt = null;
+            return;
+          }
+          addWall(startPt, sp);
+        }
+
+        if (tool === "room") {
+          const rx = Math.min(startPt.x, sp.x);
+          const ry = Math.min(startPt.y, sp.y);
+          const rw = Math.abs(sp.x - startPt.x);
+          const rh = Math.abs(sp.y - startPt.y);
+          if (rw >= GRID && rh >= GRID) {
+            pendingRectData = { rx, ry, rw, rh };
+            openModal();
+          }
+        }
+
+        startPt = null;
+      });
+
+      // ── Add wall ─────────────────────────────────────────────────────────────────
+      function addWall(a, b) {
+        const wallRec = {
+          x1: toG(a.x),
+          y1: toG(a.y),
+          x2: toG(b.x),
+          y2: toG(b.y),
+        };
+        store.walls.push(wallRec);
+
+        const line = new fabric.Line([a.x, a.y, b.x, b.y], {
+          stroke: "#1a1d23",
+          strokeWidth: 3,
+          strokeLineCap: "round",
+          selectable: false,
+          evented: true,
+          hoverCursor: "pointer",
+          data: { kind: "wall", ref: wallRec, labels: [] },
+        });
+        canvas.add(line);
+        updateInfo();
+        canvas.renderAll();
+      }
+
+      // ── Place object ─────────────────────────────────────────────────────────────
+      function placeObject(type, px, py) {
+        const rec = { type, x: toG(px), y: toG(py) };
+        store.objects.push(rec);
+
+        const col = OBJ_COLS[type];
+        const circle = new fabric.Circle({
+          radius: 11,
+          fill: col,
+          stroke: "#fff",
+          strokeWidth: 2,
+          originX: "center",
+          originY: "center",
+        });
+        const label = new fabric.Text(OBJ_EMOJI[type], {
+          fontSize: 11,
+          originX: "center",
+          originY: "center",
+          top: 1,
+        });
+        const grp = new fabric.Group([circle, label], {
+          left: px - 11,
+          top: py - 11,
+          selectable: false,
+          hasControls: false,
+          hasBorders: false,
+          evented: true,
+          hoverCursor: "pointer",
+          data: { kind: "object", type, ref: rec, labels: [] },
+        });
+        canvas.add(grp);
+        updateInfo();
+        canvas.renderAll();
+      }
+
+      // ── Remove from store ────────────────────────────────────────────────────────
+      function removeFromStore(d) {
+        if (d.kind === "wall") {
+          const i = store.walls.indexOf(d.ref);
+          if (i > -1) store.walls.splice(i, 1);
+        } else if (d.kind === "room") {
+          const i = store.rooms.indexOf(d.ref);
+          if (i > -1) store.rooms.splice(i, 1);
+        } else if (d.kind === "object") {
+          const i = store.objects.indexOf(d.ref);
+          if (i > -1) store.objects.splice(i, 1);
+        }
+      }
+
+      // ── Room modal ────────────────────────────────────────────────────────────────
+      function openModal() {
+        document.getElementById("room-name").value = "";
+        document.getElementById("room-type").value = "ward";
+        document.getElementById("ac-staff").checked = true;
+        document.getElementById("ac-patient").checked = false;
+        document.getElementById("ac-visitor").checked = false;
+        document.getElementById("ac-cleaner").checked = false;
+        document.getElementById("modal-overlay").classList.add("show");
+        setTimeout(() => document.getElementById("room-name").focus(), 80);
+      }
+
+      function cancelRoom() {
+        pendingRectData = null;
+        document.getElementById("modal-overlay").classList.remove("show");
+      }
+
+      function confirmRoom() {
+        if (!pendingRectData) return;
+
+        const name =
+          document.getElementById("room-name").value.trim() || "Room";
+        const type = document.getElementById("room-type").value;
+        const access = [];
+        if (document.getElementById("ac-staff").checked) access.push("staff");
+        if (document.getElementById("ac-patient").checked)
+          access.push("patient");
+        if (document.getElementById("ac-visitor").checked)
+          access.push("visitor");
+        if (document.getElementById("ac-cleaner").checked)
+          access.push("cleaner");
+
+        const col = ROOM_COLS[type] || ROOM_COLS.ward;
+        const { rx, ry, rw, rh } = pendingRectData;
+
+        const rec = {
+          id: "room_" + Date.now(),
+          name,
+          type,
+          access,
+          x: toG(rx),
+          y: toG(ry),
+          w: toG(rw),
+          h: toG(rh),
+        };
+        store.rooms.push(rec);
+
+        // Room rect
+        const nameLabel = new fabric.Text(name, {
+          left: rx + 5,
+          top: ry + 5,
+          fontSize: 10,
+          fill: col.stroke,
+          fontFamily: "monospace",
+          selectable: false,
+          evented: false,
+          data: { kind: "roomlabel" },
+        });
+        const accessLabel = new fabric.Text(access.join(" · ") || "no access", {
+          left: rx + 5,
+          top: ry + 18,
+          fontSize: 8,
+          fill: col.stroke,
+          fontFamily: "monospace",
+          opacity: 0.65,
+          selectable: false,
+          evented: false,
+          data: { kind: "roomlabel" },
+        });
+
+        const rect = new fabric.Rect({
+          left: rx,
+          top: ry,
+          width: rw,
+          height: rh,
+          fill: col.fill,
+          stroke: col.stroke,
+          strokeWidth: 1.5,
+          selectable: false,
+          evented: true,
+          hoverCursor: "pointer",
+          data: { kind: "room", ref: rec, labels: [nameLabel, accessLabel] },
+        });
+
+        canvas.add(rect);
+        canvas.add(nameLabel);
+        canvas.add(accessLabel);
+
+        pendingRectData = null;
+        document.getElementById("modal-overlay").classList.remove("show");
+        updateInfo();
+        canvas.renderAll();
+      }
+
+      // ── Info ──────────────────────────────────────────────────────────────────────
+      function updateInfo() {
+        document.getElementById("inf-walls").textContent = store.walls.length;
+        document.getElementById("inf-rooms").textContent = store.rooms.length;
+        document.getElementById("inf-objs").textContent = store.objects.length;
+      }
+
+      // ── Clear ─────────────────────────────────────────────────────────────────────
+      function clearAll() {
+        if (!confirm("Clear the entire floor plan?")) return;
+        canvas.clear();
+        canvas.backgroundColor = "#ffffff";
+        store.walls = [];
+        store.rooms = [];
+        store.objects = [];
+        drawGrid();
+        updateInfo();
+      }
+
+      // ── Export JSON ───────────────────────────────────────────────────────────────
+      function exportJSON() {
+        const out = {
+          width: COLS,
+          height: ROWS,
+          grid_size: GRID,
+          walls: store.walls,
+          rooms: store.rooms,
+          objects: store.objects,
+        };
+        const blob = new Blob([JSON.stringify(out, null, 2)], {
+          type: "application/json",
+        });
+        const url = URL.createObjectURL(blob);
+        const a = Object.assign(document.createElement("a"), {
+          href: url,
+          download: "floor_plan.json",
+        });
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+
+      // ── Init ──────────────────────────────────────────────────────────────────────
+      setTool("select");
+
+      document
+        .getElementById("modal-overlay")
+        .addEventListener("click", (e) => {
+          if (e.target.id === "modal-overlay") cancelRoom();
+        });
+
+      // Keyboard shortcuts
+      document.addEventListener("keydown", (e) => {
+        if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT")
+          return;
+        const map = {
+          s: "select",
+          w: "wall",
+          r: "room",
+          e: "erase",
+          b: "bed",
+          h: "handwash",
+        };
+        if (map[e.key]) setTool(map[e.key]);
+        if (e.key === "Escape") {
+          setTool("select");
+          cancelRoom();
+        }
+        if (
+          (e.key === "Delete" || e.key === "Backspace") &&
+          tool === "select"
+        ) {
+          const active = canvas.getActiveObject();
+          if (active && active.data?.kind) {
+            if (active.data.labels)
+              active.data.labels.forEach((l) => canvas.remove(l));
+            canvas.remove(active);
+            removeFromStore(active.data);
+            updateInfo();
+            canvas.renderAll();
+          }
+        }
+      });
+    </script>
+  </body>
+</html>
